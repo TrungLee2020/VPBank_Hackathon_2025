@@ -1,5 +1,5 @@
 # VPBank_Hackathon_2025
-[VPBank_Hackathon_2025](https://tuyendung.vpbank.com.vn/landing/VPBankTechnologyHackathon2025.html)
+[VPBank Hackathon 2025](https://tuyendung.vpbank.com.vn/landing/VPBankTechnologyHackathon2025.html)
 ## Timeline
 ![image](https://github.com/user-attachments/assets/f4648402-8782-467b-9130-c49a29efeeb7)
 
