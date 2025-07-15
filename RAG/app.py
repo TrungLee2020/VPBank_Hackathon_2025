@@ -71,7 +71,13 @@ async def parse_with_llamaparse(file_path: str) -> str | None:
     if not LlamaParse or not LLAMA_API_KEY:
         st.error("LlamaParse hoặc API key chưa được cấu hình.")
         return None
-    parser = LlamaParse(api_key=LLAMA_API_KEY, result_type="markdown", verbose=True, language="vi")
+    parser = LlamaParse(
+        api_key=LLAMA_API_KEY, 
+        result_type="markdown", 
+        num_workers=4,
+        verbose=True, 
+        language="vi",
+        )
     try:
         documents = await parser.aload_data(file_path=file_path)
         return documents[0].text if documents else None
@@ -102,7 +108,7 @@ async def reformat_markdown(file_path: str):
     Tạo lại định dạng đầu mục heading cho văn bản
     """
     pass
-    
+
 async def dispatch_file_parser(file_path: str) -> Path | None:
     """
     Điều phối file đến đúng trình phân tích dựa trên đuôi file.
