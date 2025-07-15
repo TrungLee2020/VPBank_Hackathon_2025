@@ -11,7 +11,7 @@ from utils import estimate_tokens
 import logging
 
 # Import Reranker
-from reranker import Reranker
+from reranker import BedrockReranker
 from config import RerankerConfig
 
 logger = logging.getLogger(__name__)
@@ -406,12 +406,12 @@ class FAISSVectorStore(VectorStore):
 class HierarchicalRetriever:
     """Hierarchical retrieval system"""
     
-    def __init__(self, vector_store: VectorStore, embedder: VietnameseEmbedder, reranker_config: RerankerConfig = None):
+    def __init__(self, vector_store: VectorStore, embedder: VietnameseEmbedder, reranker_config: RerankerConfig, bedrock_region: str):
         self.vector_store = vector_store
         self.embedder = embedder
         # Khởi tạo reranker
         self.reranker_config = reranker_config or RerankerConfig()
-        self.reranker = Reranker(self.reranker_config)
+        self.reranker = BedrockReranker(reranker_config, bedrock_region)
     
     def retrieve(self, query: str, k: int = 5, retrieval_strategy: str = 'hierarchical') -> List[RetrievalResult]:
         """Main retrieval function"""

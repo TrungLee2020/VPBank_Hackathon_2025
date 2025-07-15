@@ -10,9 +10,8 @@ from botocore.exceptions import ClientError
 # Import các thành phần cần thiết
 from config import RAGConfig
 from embedder import VietnameseEmbedder
-from retriever import HierarchicalRetriever
 from opensearch_vector_store import OpenSearchVectorStore
-from retriever import FAISSVectorStore, VectorStore
+from retriever import HierarchicalRetriever,FAISSVectorStore, VectorStore
 
 # Cấu hình logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -33,7 +32,8 @@ class RetrievalPipeline:
         self.retriever = HierarchicalRetriever(
             self.vector_store,
             self.embedder,
-            reranker_config=self.config.reranker
+            reranker_config=self.config.reranker,
+            bedrock_region=self.config.bedrock.aws_region # Truyền region
         )
         
         # 3. Initialize Bedrock client for generation

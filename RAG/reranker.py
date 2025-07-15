@@ -1,74 +1,78 @@
-# --- reranker.py ---
+# --- START OF FILE reranker.py ---
 
 import logging
-from typing import List, Tuple
-from sentence_transformers import CrossEncoder
-import torch
+from typing import List
+import boto3
+from botocore.exceptions import ClientError
+
 from config import RerankerConfig
 from retriever import RetrievalResult
 
 logger = logging.getLogger(__name__)
 
-class Reranker:
+class BedrockReranker:
     """
-    Sử dụng một Cross-Encoder model để rerank các kết quả truy xuất.
-    Cross-Encoder nhận cả câu query và document, sau đó đưa ra một điểm số về mức độ liên quan.
+    Sử dụng API 'rerank' của Amazon Bedrock với mô hình Cohere Rerank.
     """
-    def __init__(self, config: RerankerConfig):
+    def __init__(self, config: RerankerConfig, bedrock_region: str):
         self.config = config
-        self.model = None
+        self.bedrock_client = None
         if self.config.enabled:
-            self._load_model()
-
-    def _load_model(self):
-        """Tải mô hình Cross-Encoder."""
-        try:
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            self.model = CrossEncoder(self.config.model_name, device=device)
-            logger.info(f"Loaded reranker model '{self.config.model_name}' on {device}.")
-        except Exception as e:
-            logger.error(f"Failed to load reranker model '{self.config.model_name}': {e}")
-            # Tự động vô hiệu hóa reranking nếu không tải được model
-            self.config.enabled = False
-            self.model = None
+            try:
+                self.bedrock_client = boto3.client('bedrock-runtime', region_name=bedrock_region)
+                logger.info(f"Initialized Bedrock Reranker client for model '{self.config.bedrock_model_id}' in region '{bedrock_region}'.")
+            except Exception as e:
+                logger.error(f"Failed to create Bedrock client for reranker: {e}")
+                self.config.enabled = False
 
     def rerank(self, query: str, results: List[RetrievalResult]) -> List[RetrievalResult]:
         """
-        Rerank một danh sách các RetrievalResult.
+        Rerank một danh sách các kết quả bằng Cohere Rerank trên Bedrock.
 
         Args:
             query: Câu truy vấn gốc.
-            results: Danh sách kết quả từ bước truy xuất ban đầu (từ VectorStore).
+            results: Danh sách kết quả từ VectorStore.
 
         Returns:
-            Danh sách kết quả đã được sắp xếp lại và lọc theo điểm số rerank.
+            Danh sách kết quả đã được sắp xếp lại và lọc theo điểm của Bedrock.
         """
-        if not self.config.enabled or not self.model or not results:
-            return results
+        if not self.config.enabled or not self.bedrock_client or not results:
+            return results[:self.config.top_n]
 
-        logger.info(f"Reranking {len(results)} results for query: '{query[:50]}...'")
+        logger.info(f"Reranking {len(results)} results using Bedrock model '{self.config.bedrock_model_id}'...")
 
-        # Tạo các cặp (query, document_content) để đưa vào model
-        pairs = []
-        for result in results:
-            # Sử dụng content của chunk con (chính xác hơn) để rerank
-            pairs.append((query, result.chunk.content))
+        # Chuẩn bị danh sách các documents (dạng chuỗi) cho API
+        documents = [res.chunk.content for res in results]
 
-        # Tính điểm số rerank
         try:
-            scores = self.model.predict(pairs, batch_size=self.config.batch_size, show_progress_bar=False)
-        except Exception as e:
-            logger.error(f"Error during reranking prediction: {e}")
-            # Trả về kết quả ban đầu nếu có lỗi
-            return results
+            # Gọi API rerank của Bedrock
+            response = self.bedrock_client.rerank(
+                modelId=self.config.bedrock_model_id,
+                query=query,
+                documents=documents,
+                topN=self.config.top_n
+            )
+            reranked_api_results = response.get('results', [])
+        except ClientError as e:
+            logger.error(f"Error calling Bedrock Rerank API: {e}")
+            # Nếu lỗi, trả về top N kết quả ban đầu
+            return sorted(results, key=lambda x: x.score, reverse=True)[:self.config.top_n]
 
-        # Gán điểm số mới cho mỗi kết quả và sắp xếp lại
-        for result, score in zip(results, scores):
-            # Ghi đè điểm số cũ bằng điểm số từ reranker
-            result.score = float(score)
+        # Xử lý kết quả trả về từ API
+        final_results = []
+        for reranked_item in reranked_api_results:
+            # Lấy chỉ số của document trong danh sách gốc
+            original_index = reranked_item['index']
+            new_score = reranked_item['relevance_score']
 
-        # Sắp xếp lại danh sách kết quả dựa trên điểm số rerank mới (cao đến thấp)
-        results.sort(key=lambda x: x.score, reverse=True)
-
-        # Trả về top N kết quả sau khi rerank
-        return results[:self.config.top_n]
+            # Lấy đối tượng RetrievalResult gốc tương ứng
+            original_result = results[original_index]
+            
+            # Cập nhật điểm số của nó với điểm từ Cohere
+            original_result.score = new_score
+            
+            final_results.append(original_result)
+        
+        # API đã trả về danh sách được sắp xếp và lọc theo topN,
+        # nên không cần sắp xếp lại ở đây.
+        return final_results

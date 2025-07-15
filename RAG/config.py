@@ -58,19 +58,19 @@ class RerankerConfig:
     # Bật/tắt tính năng rerank
     enabled: bool = True 
     
-    # Các lựa chọn khác: 'ms-marco-MiniLM-L-12-v2', 'cross-encoder/ms-marco-MiniLM-L-6-v2' cho local
+    # Các lựa chọn khác: 'ms-marco-MiniLM-L-12-v2', 'cross-encoder/ms-marco-MiniLM-L-6-v2'
     model_name: str = "BAAI/bge-reranker-v2-m3"
     
     # Model AWS
-    modelId = "cohere.rerank-v3-5:0"
-    model_package_arn = f"arn:aws:bedrock:{region}::foundation-model/{modelId}"
+    # modelId = "cohere.rerank-v3-5:0"
+    # model_package_arn = f"arn:aws:bedrock:{region}::foundation-model/{modelId}"
+    bedrock_model_id: str = "cohere.rerank-multilingual-v3.5"
 
     # Số lượng kết quả sẽ giữ lại sau khi rerank
     top_n: int = 5
     
     # Kích thước batch khi rerank
     batch_size: int = 8
-
 @dataclass
 class RAGConfig:
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
