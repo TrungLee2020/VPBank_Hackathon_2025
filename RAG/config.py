@@ -1,7 +1,9 @@
+# --- config.py ---
+
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
 @dataclass
@@ -14,8 +16,8 @@ class ChunkingConfig:
     
 @dataclass
 class EmbeddingConfig:
-    model_name: str = "thenlper/gte-small" #"dangvantuan/vietnamese-document-embedding"
-    model_dimension: int = 384 #768
+    model_name: str = "thenlper/gte-small"
+    model_dimension: int = 384
     batch_size: int = 32
     max_length: int = 512
 
@@ -27,14 +29,53 @@ class TableConfig:
     extract_headers: bool = True
 
 @dataclass
+class BedrockConfig:
+    aws_region: str = "us-east-1"
+    model_id: str = "amazon.titan-text-express-v1"
+
+@dataclass
+class OpenSearchConfig:
+    """Cấu hình để kết nối tới AWS OpenSearch Service."""
+    # Lấy từ trang quản lý domain OpenSearch trên AWS console
+    # Ví dụ: 'https://your-domain-name.us-east-1.es.amazonaws.com'
+    hosts: List[str] = field(default_factory=lambda: ["https://localhost:9200"])
+    
+    # Sử dụng Basic Auth nếu bạn đã cấu hình Fine-Grained Access Control
+    # Ví dụ: ('your_master_user', 'your_master_password')
+    http_auth: Optional[Tuple[str, str]] = None 
+    
+    # Tên của index sẽ được tạo trong OpenSearch để lưu trữ vectors
+    index_name: str = "vietnamese_rag_index"
+    
+    use_ssl: bool = True
+    verify_certs: bool = True
+    ssl_assert_hostname: bool = True
+    ssl_show_warn: bool = True
+
+@dataclass
+class RerankerConfig:
+    """Cấu hình cho bước reranking."""
+    # Bật/tắt tính năng rerank
+    enabled: bool = True 
+    
+    # Các lựa chọn khác: 'ms-marco-MiniLM-L-12-v2', 'cross-encoder/ms-marco-MiniLM-L-6-v2'
+    model_name: str = "BAAI/bge-reranker-v2-m3"
+    
+    # Số lượng kết quả sẽ giữ lại sau khi rerank
+    top_n: int = 5
+    
+    # Kích thước batch khi rerank
+    batch_size: int = 8
+@dataclass
 class RAGConfig:
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     table: TableConfig = field(default_factory=TableConfig)
-    vector_store_type: str = "faiss"  # or "milvus"  # or "qdrant", "chroma"
+    bedrock: BedrockConfig = field(default_factory=BedrockConfig)
+    opensearch: OpenSearchConfig = field(default_factory=OpenSearchConfig)
+    
+    # Thêm 'opensearch' vào danh sách các vector store được hỗ trợ
+    vector_store_type: str = "opensearch"  # Có thể là "faiss" hoặc "opensearch"
+    
     cache_enabled: bool = True
     cache_ttl: int = 3600
-
-
-# Global config instance
-# config = RAGConfig()

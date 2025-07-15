@@ -1,282 +1,3 @@
-
-# from typing import List, Dict, Optional, Tuple
-# import numpy as np
-# from dataclasses import dataclass
-# import faiss
-# from abc import ABC, abstractmethod
-# from chunker import Chunk
-# from embedder import VietnameseEmbedder
-# from utils import estimate_tokens
-# import logging
-# logger = logging.getLogger(__name__)
-
-# @dataclass
-# class RetrievalResult:
-#     chunk_id: str
-#     score: float
-#     chunk: Chunk
-#     parent_chunk: Optional[Chunk] = None
-
-# class VectorStore(ABC):
-#     """Abstract vector store interface"""
-    
-#     @abstractmethod
-#     def add_embeddings(self, embeddings: Dict[str, np.ndarray], chunks: List[Chunk]):
-#         pass
-    
-#     @abstractmethod
-#     def search(self, query_embedding: np.ndarray, k: int, filter_dict: Dict = None) -> List[RetrievalResult]:
-#         pass
-    
-#     @abstractmethod
-#     def get_chunk_by_id(self, chunk_id: str) -> Optional[Chunk]:
-#         pass
-
-# class FAISSVectorStore(VectorStore):
-#     """FAISS-based vector store implementation"""
-    
-#     def __init__(self, dimension: int = 768):
-#         self.dimension = dimension
-#         self.index = faiss.IndexFlatIP(dimension)  # Inner product for cosine similarity
-#         self.chunk_map = {}  # chunk_id -> Chunk
-#         self.id_map = {}     # faiss_id -> chunk_id
-#         self.embedding_map = {}  # chunk_id -> embedding
-#         self.next_id = 0
-    
-#     def add_embeddings(self, embeddings: Dict[str, np.ndarray], chunks: List[Chunk]):
-#         """Add embeddings to FAISS index"""
-#         chunk_dict = {chunk.id: chunk for chunk in chunks}
-        
-#         embeddings_list = []
-#         chunk_ids = []
-        
-#         for chunk_id, embedding in embeddings.items():
-#             if chunk_id in chunk_dict:
-#                 # Normalize embedding for cosine similarity
-#                 norm = np.linalg.norm(embedding)
-#                 if norm > 0:
-#                     normalized_embedding = embedding / norm
-#                     embeddings_list.append(normalized_embedding)
-#                     chunk_ids.append(chunk_id)
-                    
-#                     # Update mappings
-#                     self.chunk_map[chunk_id] = chunk_dict[chunk_id]
-#                     self.id_map[self.next_id] = chunk_id
-#                     self.embedding_map[chunk_id] = normalized_embedding
-#                     self.next_id += 1
-        
-#         if embeddings_list:
-#             embeddings_array = np.array(embeddings_list).astype('float32')
-#             self.index.add(embeddings_array)
-#             logger.info(f"Added {len(embeddings_list)} embeddings to FAISS index")
-    
-#     def search(self, query_embedding: np.ndarray, k: int, filter_dict: Dict = None) -> List[RetrievalResult]:
-#         """Search for similar chunks"""
-#         # Normalize query embedding
-#         norm = np.linalg.norm(query_embedding)
-#         if norm > 0:
-#             query_embedding = query_embedding / norm
-        
-#         # Search in FAISS
-#         scores, indices = self.index.search(
-#             query_embedding.reshape(1, -1).astype('float32'), 
-#             min(k * 2, self.index.ntotal)  # Get more candidates for filtering
-#         )
-        
-#         results = []
-#         for score, idx in zip(scores[0], indices[0]):
-#             if idx == -1:  # Invalid index
-#                 continue
-                
-#             chunk_id = self.id_map.get(idx)
-#             if not chunk_id:
-#                 continue
-                
-#             chunk = self.chunk_map.get(chunk_id)
-#             if not chunk:
-#                 continue
-            
-#             # Apply filters
-#             if filter_dict and not self._matches_filter(chunk, filter_dict):
-#                 continue
-            
-#             result = RetrievalResult(
-#                 chunk_id=chunk_id,
-#                 score=float(score),
-#                 chunk=chunk
-#             )
-#             results.append(result)
-            
-#             if len(results) >= k:
-#                 break
-        
-#         return results
-    
-#     def get_chunk_by_id(self, chunk_id: str) -> Optional[Chunk]:
-#         """Get chunk by ID"""
-#         return self.chunk_map.get(chunk_id)
-    
-#     def _matches_filter(self, chunk: Chunk, filter_dict: Dict) -> bool:
-#         """Check if chunk matches filter criteria"""
-#         for key, value in filter_dict.items():
-#             if key == 'chunk_type':
-#                 if isinstance(value, list):
-#                     if chunk.chunk_type not in value:
-#                         return False
-#                 elif chunk.chunk_type != value:
-#                     return False
-#             elif key in chunk.metadata:
-#                 if chunk.metadata[key] != value:
-#                     return False
-#         return True
-
-# class HierarchicalRetriever:
-#     """Hierarchical retrieval system"""
-    
-#     def __init__(self, vector_store: VectorStore, embedder: VietnameseEmbedder):
-#         self.vector_store = vector_store
-#         self.embedder = embedder
-    
-#     def retrieve(self, query: str, k: int = 5, retrieval_strategy: str = 'hierarchical') -> List[RetrievalResult]:
-#         """Main retrieval function"""
-#         query_embedding = self.embedder.embed_query(query)
-        
-#         if retrieval_strategy == 'hierarchical':
-#             return self._hierarchical_retrieve(query_embedding, k)
-#         elif retrieval_strategy == 'table_aware':
-#             return self._table_aware_retrieve(query, query_embedding, k)
-#         else:
-#             return self._simple_retrieve(query_embedding, k)
-    
-#     def _hierarchical_retrieve(self, query_embedding: np.ndarray, k: int) -> List[RetrievalResult]:
-#         """Hierarchical retrieval: child chunks -> parent chunks"""
-#         # Step 1: Retrieve child chunks for precision
-#         child_results = self.vector_store.search(
-#             query_embedding,
-#             k=k * 3,  # Get more child candidates
-#             filter_dict={'chunk_type': ['child', 'table_child']}
-#         )
-        
-#         # Step 2: Get parent chunks for context
-#         final_results = []
-#         seen_parents = set()
-        
-#         for child_result in child_results[:k]:
-#             chunk = child_result.chunk
-            
-#             # Get parent chunk if available
-#             parent_chunk = None
-#             if chunk.parent_id:
-#                 parent_chunk = self.vector_store.get_chunk_by_id(chunk.parent_id)
-                
-#                 # Avoid duplicate parents
-#                 if parent_chunk and parent_chunk.id not in seen_parents:
-#                     seen_parents.add(parent_chunk.id)
-                    
-#                     # Create result with parent context
-#                     result = RetrievalResult(
-#                         chunk_id=chunk.id,
-#                         score=child_result.score,
-#                         chunk=chunk,
-#                         parent_chunk=parent_chunk
-#                     )
-#                     final_results.append(result)
-#             else:
-#                 # Standalone chunk
-#                 final_results.append(child_result)
-            
-#             if len(final_results) >= k:
-#                 break
-        
-#         return final_results
-    
-#     def _table_aware_retrieve(self, query: str, query_embedding: np.ndarray, k: int) -> List[RetrievalResult]:
-#         """Table-aware retrieval"""
-#         # Classify query type
-#         query_type = self._classify_query_type(query)
-        
-#         if query_type == 'table_query':
-#             # Prioritize table chunks
-#             table_results = self.vector_store.search(
-#                 query_embedding,
-#                 k=k,
-#                 filter_dict={'chunk_type': ['table_child']}
-#             )
-            
-#             # Enhance with parent context
-#             enhanced_results = []
-#             for result in table_results:
-#                 if result.chunk.parent_id:
-#                     parent_chunk = self.vector_store.get_chunk_by_id(result.chunk.parent_id)
-#                     result.parent_chunk = parent_chunk
-#                 enhanced_results.append(result)
-            
-#             return enhanced_results
-#         else:
-#             # Standard hierarchical retrieval
-#             return self._hierarchical_retrieve(query_embedding, k)
-    
-#     def _simple_retrieve(self, query_embedding: np.ndarray, k: int) -> List[RetrievalResult]:
-#         """Simple similarity search"""
-#         return self.vector_store.search(query_embedding, k)
-    
-#     def _classify_query_type(self, query: str) -> str:
-#         """Classify query type for appropriate retrieval strategy"""
-#         query_lower = query.lower()
-        
-#         # Table query indicators
-#         table_keywords = [
-#             'bảng', 'biểu', 'danh sách', 'thống kê', 'số liệu',
-#             'cột', 'hàng', 'dữ liệu', 'tỷ lệ', 'phần trăm'
-#         ]
-        
-#         if any(keyword in query_lower for keyword in table_keywords):
-#             return 'table_query'
-        
-#         return 'text_query'
-    
-#     def format_context(self, results: List[RetrievalResult], max_tokens: int = 4096) -> str:
-#         """Format retrieval results into context for LLM"""
-#         context_parts = []
-#         current_tokens = 0
-        
-#         for i, result in enumerate(results):
-#             # Use parent chunk if available for better context
-#             chunk_to_use = result.parent_chunk if result.parent_chunk else result.chunk
-            
-#             # Add metadata context
-#             metadata = chunk_to_use.metadata
-#             context_header = f"**Nguồn {i+1}**"
-            
-#             if metadata.get('hierarchy_path'):
-#                 context_header += f" ({metadata['hierarchy_path']})"
-            
-#             context_header += f" - Độ liên quan: {result.score:.3f}"
-            
-#             # Add content
-#             chunk_content = chunk_to_use.content
-#             chunk_tokens = estimate_tokens(chunk_content)
-            
-#             # Check if we have space
-#             if current_tokens + chunk_tokens > max_tokens:
-#                 # Truncate content to fit
-#                 remaining_tokens = max_tokens - current_tokens
-#                 if remaining_tokens > 100:  # Only add if meaningful space left
-#                     words = chunk_content.split()
-#                     truncated_words = words[:int(remaining_tokens * 0.8)]  # Conservative estimate
-#                     chunk_content = ' '.join(truncated_words) + "..."
-#                     chunk_tokens = remaining_tokens
-#                 else:
-#                     break
-            
-#             context_parts.append(f"{context_header}\n{chunk_content}")
-#             current_tokens += chunk_tokens + 20  # Header overhead
-            
-#             if current_tokens >= max_tokens:
-#                 break
-        
-#         return "\n\n" + "="*50 + "\n\n".join(context_parts)
-
 from typing import List, Dict, Optional, Tuple, Union
 import numpy as np
 from dataclasses import dataclass
@@ -288,6 +9,10 @@ from chunker import Chunk
 from embedder import VietnameseEmbedder
 from utils import estimate_tokens
 import logging
+
+# Import Reranker
+from reranker import Reranker
+from config import RerankerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -681,20 +406,35 @@ class FAISSVectorStore(VectorStore):
 class HierarchicalRetriever:
     """Hierarchical retrieval system"""
     
-    def __init__(self, vector_store: VectorStore, embedder: VietnameseEmbedder):
+    def __init__(self, vector_store: VectorStore, embedder: VietnameseEmbedder, reranker_config: RerankerConfig = None):
         self.vector_store = vector_store
         self.embedder = embedder
+        # Khởi tạo reranker
+        self.reranker_config = reranker_config or RerankerConfig()
+        self.reranker = Reranker(self.reranker_config)
     
     def retrieve(self, query: str, k: int = 5, retrieval_strategy: str = 'hierarchical') -> List[RetrievalResult]:
         """Main retrieval function"""
         query_embedding = self.embedder.embed_query(query)
+        # Lấy số lượng ứng viên ban đầu lớn hơn để cung cấp cho reranker
+        # Nếu rerank được bật, lấy nhiều ứng viên hơn (ví dụ: 5*k)
+        initial_k = k * 5 if self.reranker.config.enabled else k
         
+        # Bước 1: Truy xuất ứng viên ban đầu
         if retrieval_strategy == 'hierarchical':
-            return self._hierarchical_retrieve(query_embedding, k)
+            initial_results = self._hierarchical_retrieve(query_embedding, initial_k)
         elif retrieval_strategy == 'table_aware':
-            return self._table_aware_retrieve(query, query_embedding, k)
+            initial_results = self._table_aware_retrieve(query, query_embedding, initial_k)
         else:
-            return self._simple_retrieve(query_embedding, k)
+            initial_results = self._simple_retrieve(query_embedding, initial_k)
+        # Bước 2: Rerank các ứng viên (nếu được bật)
+        if self.reranker.config.enabled:
+            reranked_results = self.reranker.rerank(query, initial_results)
+            # Sau khi rerank, số lượng kết quả sẽ là reranker.config.top_n
+            return reranked_results
+        else:
+            # Nếu không rerank, trả về top k kết quả ban đầu
+            return initial_results[:k]
     
     def _hierarchical_retrieve(self, query_embedding: np.ndarray, k: int) -> List[RetrievalResult]:
         """Hierarchical retrieval: child chunks -> parent chunks"""

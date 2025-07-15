@@ -1,10 +1,19 @@
+# --- START OF FILE chunker.py ---
+
 
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 import math
 from config import ChunkingConfig
-from utils import estimate_tokens, generate_chunk_id, VietnameseTextProcessor
-from preprocessor import DocumentStructure
+from utils import generate_chunk_id, VietnameseTextProcessor, Tokenizer, HeuristicTokenizer
+
+@dataclass
+class DocumentStructure:
+    title: str
+    sections: List[Dict]
+    tables: List[Dict]
+    references: List[str]
+    metadata: Dict
 
 @dataclass
 class Chunk:
@@ -19,15 +28,18 @@ class Chunk:
     def __post_init__(self):
         if self.child_ids is None:
             self.child_ids = []
+        # Token count is now calculated during chunking, so this check is a fallback.
         if self.tokens == 0:
-            self.tokens = estimate_tokens(self.content)
+            self.tokens = HeuristicTokenizer().count_tokens(self.content)
 
 class HierarchicalChunker:
     """Hierarchical chunking for Vietnamese documents"""
     
-    def __init__(self, config: ChunkingConfig = None):
+    def __init__(self, config: ChunkingConfig = None, tokenizer: Tokenizer = None):
         self.config = config or ChunkingConfig()
         self.text_processor = VietnameseTextProcessor()
+        # Sử dụng tokenizer được truyền vào, nếu không thì dùng tokenizer heuristic mặc định
+        self.tokenizer = tokenizer or HeuristicTokenizer()
     
     def chunk_document(self, doc_structure: DocumentStructure) -> List[Chunk]:
         """Main chunking pipeline"""
@@ -44,6 +56,10 @@ class HierarchicalChunker:
             
             all_chunks.extend(chunks)
         
+        # Recalculate token counts for all chunks using the provided tokenizer
+        for chunk in all_chunks:
+            chunk.tokens = self.tokenizer.count_tokens(chunk.content)
+            
         return all_chunks
     
     def _chunk_section_with_tables(self, section: Dict, tables: List[Dict], 
@@ -211,7 +227,7 @@ class HierarchicalChunker:
             return []
         
         # Estimate current tokens
-        current_tokens = estimate_tokens(text)
+        current_tokens = self.tokenizer.count_tokens(text)
         
         if current_tokens <= chunk_size:
             return [text]
@@ -220,22 +236,22 @@ class HierarchicalChunker:
         sentences = self.text_processor.extract_vietnamese_sentences(text)
         chunks = []
         current_chunk = []
-        current_tokens = 0
+        current_tokens_count = 0
         
         for sentence in sentences:
-            sentence_tokens = estimate_tokens(sentence)
+            sentence_tokens = self.tokenizer.count_tokens(sentence)
             
-            if current_tokens + sentence_tokens > chunk_size and current_chunk:
+            if current_tokens_count + sentence_tokens > chunk_size and current_chunk:
                 # Finalize current chunk
                 chunks.append(' '.join(current_chunk))
                 
                 # Start new chunk with overlap
                 overlap_sentences = self._get_overlap_sentences(current_chunk, overlap)
                 current_chunk = overlap_sentences + [sentence]
-                current_tokens = sum(estimate_tokens(s) for s in current_chunk)
+                current_tokens_count = self.tokenizer.count_tokens(' '.join(current_chunk))
             else:
                 current_chunk.append(sentence)
-                current_tokens += sentence_tokens
+                current_tokens_count += sentence_tokens
         
         # Add final chunk
         if current_chunk:
@@ -253,7 +269,7 @@ class HierarchicalChunker:
         
         # Work backwards from end of chunk
         for sentence in reversed(sentences):
-            sentence_tokens = estimate_tokens(sentence)
+            sentence_tokens = self.tokenizer.count_tokens(sentence)
             if total_tokens + sentence_tokens <= overlap_tokens:
                 overlap_sentences.insert(0, sentence)
                 total_tokens += sentence_tokens

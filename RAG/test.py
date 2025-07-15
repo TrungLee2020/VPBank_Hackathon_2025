@@ -8,7 +8,7 @@ import asyncio
 import os
 import time
 from pathlib import Path
-from enhanced_rag_main import VietnameseRAGSystem
+from main import VietnameseRAGSystem
 from vector_store_manager import VectorStoreManager
 from config import RAGConfig
 
