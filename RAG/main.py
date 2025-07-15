@@ -1,269 +1,14 @@
-# from typing import List, Dict, Tuple
-# from config import RAGConfig, ChunkingConfig, EmbeddingConfig, TableConfig
-# from preprocessor import VietnameseMarkdownPreprocessor
-# from chunker import HierarchicalChunker
-# from table_processor import TableProcessor
-# from embedder import VietnameseEmbedder
-# from retriever import HierarchicalRetriever, RetrievalResult, VectorStore,  EnhancedFAISSVectorStore # FAISSVectorStore,
-# import faiss
-
-# import logging  
-# import asyncio
-
-# logging.basicConfig(level=logging.INFO)
-# logger = logging.getLogger(__name__)
-
-
-# class VietnameseRAGSystem:
-#     """Main RAG system orchestrating all components"""
-    
-#     def __init__(self, config: RAGConfig = None):
-#         self.config = config or RAGConfig()
-        
-#         # Initialize components
-#         self.preprocessor = VietnameseMarkdownPreprocessor()
-#         self.chunker = HierarchicalChunker(self.config.chunking)
-#         self.table_processor = TableProcessor(self.config.table)
-#         self.embedder = VietnameseEmbedder(self.config.embedding)
-        
-#         # Initialize vector store
-#         self.vector_store = self._create_vector_store()
-#         self.retriever = HierarchicalRetriever(self.vector_store, self.embedder)
-        
-#         # Statistics
-#         self.stats = {
-#             'documents_processed': 0,
-#             'chunks_created': 0,
-#             'embeddings_generated': 0
-#         }
-    
-#     def _create_vector_store(self) -> VectorStore:
-#         """Create vector store based on configuration"""
-#         if self.config.vector_store_type == 'faiss':
-#             # return FAISSVectorStore(dimension=self.config.embedding.model_dimension)
-#             return EnhancedFAISSVectorStore(
-#                 dimension=self.config.embedding.model_dimension,
-#                 index_type='hnsw',  # hoặc 'flat', 'ivf'
-#                 m=32,              # số lượng kết nối cho HNSW
-#                 ef_construction=200, # kích thước danh sách ứng viên khi xây dựng
-#                 ef_search=128,     # kích thước danh sách ứng viên khi tìm kiếm
-#                 metric='cosine'    # hoặc 'l2', 'ip'
-#             )
-#         else:
-#             raise ValueError(f"Unsupported vector store type: {self.config.vector_store_type}")
-    
-#     async def process_document(self, content: str, document_id: str = None) -> Dict:
-#         """Process a single document through the full pipeline"""
-#         try:
-#             # Step 1: Preprocess document
-#             logger.info(f"Preprocessing document {document_id}")
-#             doc_structure = self.preprocessor.preprocess_document(content)
-            
-#             # Step 2: Process tables
-#             logger.info("Processing tables")
-#             for i, table in enumerate(doc_structure.tables):
-#                 doc_structure.tables[i] = self.table_processor.process_table(table)
-            
-#             # Step 3: Create chunks
-#             logger.info("Creating hierarchical chunks")
-#             chunks = self.chunker.chunk_document(doc_structure)
-            
-#             # Step 4: Generate embeddings
-#             logger.info("Generating embeddings")
-#             embeddings = await self.embedder.embed_chunks_async(chunks)
-            
-#             # Step 5: Store in vector database
-#             logger.info("Storing in vector database")
-#             self.vector_store.add_embeddings(embeddings, chunks)
-            
-#             # Update statistics
-#             self.stats['documents_processed'] += 1
-#             self.stats['chunks_created'] += len(chunks)
-#             self.stats['embeddings_generated'] += len(embeddings)
-            
-#             return {
-#                 'status': 'success',
-#                 'document_id': document_id,
-#                 'chunks_created': len(chunks),
-#                 'embeddings_generated': len(embeddings),
-#                 'tables_processed': len(doc_structure.tables)
-#             }
-            
-#         except Exception as e:
-#             logger.error(f"Error processing document {document_id}: {e}")
-#             return {
-#                 'status': 'error',
-#                 'document_id': document_id,
-#                 'error': str(e)
-#             }
-    
-#     async def process_documents_batch(self, documents: List[Tuple[str, str]]) -> List[Dict]:
-#         """Process multiple documents in batch"""
-#         tasks = []
-#         for content, doc_id in documents:
-#             task = self.process_document(content, doc_id)
-#             tasks.append(task)
-        
-#         results = await asyncio.gather(*tasks, return_exceptions=True)
-#         return results
-    
-#     def query(self, question: str, k: int = 5, strategy: str = 'hierarchical') -> Dict:
-#         """Query the RAG system"""
-#         try:
-#             # Retrieve relevant chunks
-#             results = self.retriever.retrieve(
-#                 query=question,
-#                 k=k,
-#                 retrieval_strategy=strategy
-#             )
-            
-#             if not results:
-#                 return {
-#                     'answer': 'Không tìm thấy thông tin liên quan đến câu hỏi.',
-#                     'sources': [],
-#                     'confidence': 0.0
-#                 }
-            
-#             # Format context
-#             context = self.retriever.format_context(results)
-            
-#             # Calculate confidence score
-#             confidence = self._calculate_confidence(results)
-            
-#             # Prepare sources
-#             sources = []
-#             for result in results:
-#                 source_info = {
-#                     'chunk_id': result.chunk_id,
-#                     'score': result.score,
-#                     'title': result.chunk.metadata.get('section_title', 'Unknown'),
-#                     'hierarchy_path': result.chunk.metadata.get('hierarchy_path', ''),
-#                     'chunk_type': result.chunk.chunk_type
-#                 }
-#                 sources.append(source_info)
-            
-#             return {
-#                 'context': context,
-#                 'sources': sources,
-#                 'confidence': confidence,
-#                 'strategy_used': strategy
-#             }
-            
-#         except Exception as e:
-#             logger.error(f"Error in query: {e}")
-#             return {
-#                 'answer': f'Lỗi khi xử lý câu hỏi: {str(e)}',
-#                 'sources': [],
-#                 'confidence': 0.0
-#             }
-    
-#     def _calculate_confidence(self, results: List[RetrievalResult]) -> float:
-#         """Calculate confidence score based on retrieval results"""
-#         if not results:
-#             return 0.0
-        
-#         # Average of top scores with weighted decay
-#         weights = [0.4, 0.3, 0.2, 0.1]  # Weight for top 4 results
-#         weighted_score = 0.0
-#         total_weight = 0.0
-        
-#         for i, result in enumerate(results[:4]):
-#             weight = weights[i] if i < len(weights) else 0.05
-#             weighted_score += result.score * weight
-#             total_weight += weight
-        
-#         return min(weighted_score / total_weight if total_weight > 0 else 0.0, 1.0)
-    
-#     def get_statistics(self) -> Dict:
-#         """Get system statistics"""
-#         return self.stats.copy()
-    
-#     def save_index(self, filepath: str):
-#         """Save vector index to disk"""
-#         if hasattr(self.vector_store, 'index'):
-#             faiss.write_index(self.vector_store.index, f"{filepath}.faiss")
-            
-#             # Save metadata
-#             import pickle
-#             metadata = {
-#                 'chunk_map': self.vector_store.chunk_map,
-#                 'id_map': self.vector_store.id_map,
-#                 'embedding_map': self.vector_store.embedding_map,
-#                 'next_id': self.vector_store.next_id,
-#                 'stats': self.stats
-#             }
-            
-#             with open(f"{filepath}.metadata", 'wb') as f:
-#                 pickle.dump(metadata, f)
-            
-#             logger.info(f"Index saved to {filepath}")
-    
-#     def load_index(self, filepath: str):
-#         """Load vector index from disk"""
-#         try:
-#             # Load FAISS index
-#             self.vector_store.index = faiss.read_index(f"{filepath}.faiss")
-            
-#             # Load metadata
-#             import pickle
-#             with open(f"{filepath}.metadata", 'rb') as f:
-#                 metadata = pickle.load(f)
-            
-#             self.vector_store.chunk_map = metadata['chunk_map']
-#             self.vector_store.id_map = metadata['id_map']
-#             self.vector_store.embedding_map = metadata['embedding_map']
-#             self.vector_store.next_id = metadata['next_id']
-#             self.stats = metadata.get('stats', self.stats)
-            
-#             logger.info(f"Index loaded from {filepath}")
-            
-#         except Exception as e:
-#             logger.error(f"Error loading index: {e}")
-
-# # =============================================================================
-# # Usage Example
-# # =============================================================================
-
-# async def example_usage():
-#     """Example of how to use the Vietnamese RAG system"""
-    
-#     # Initialize system
-#     config = RAGConfig()
-#     rag_system = VietnameseRAGSystem(config)
-    
-#     # Sample Vietnamese administrative document
-#     with open('output.md', 'r', encoding='utf-8') as f:
-#         sample_document = f.read()
-    
-#     # Process document
-#     result = await rag_system.process_document(sample_document, "sample_doc_1")
-#     print(f"Processing result: {result}")
-    
-#     # Query the system
-#     query_result = rag_system.query(
-#         "Đơn vị chuyển giao của TTDV Thạch Thất?",
-#         k=3,
-#         strategy='hierarchical'
-#     )
-    
-#     print(f"Query result: {query_result}")
-    
-#     # Get statistics
-#     stats = rag_system.get_statistics()
-#     print(f"System stats: {stats}")
-
-# # Run example
-# if __name__ == "__main__":
-#     import asyncio
-#     asyncio.run(example_usage())
+# --- main.py ---
 
 from typing import List, Dict, Tuple, Optional
-from config import RAGConfig, ChunkingConfig, EmbeddingConfig, TableConfig
+from config import RAGConfig
 from preprocessor import VietnameseMarkdownPreprocessor
 from chunker import HierarchicalChunker
 from table_processor import TableProcessor
 from embedder import VietnameseEmbedder
 from retriever import HierarchicalRetriever, RetrievalResult, VectorStore, FAISSVectorStore
+# Import các lớp tokenizer mới
+from utils import Tokenizer, HeuristicTokenizer, BedrockTokenizer
 import os
 import json
 import logging  
@@ -280,13 +25,22 @@ logger = logging.getLogger(__name__)
 class VietnameseRAGSystem:
     """Enhanced RAG system với vector store management"""
     
-    def __init__(self, config: RAGConfig = None, index_path: str = None):
+    def __init__(self, config: RAGConfig = None, index_path: str = None, use_bedrock_tokenizer: bool = False):
         self.config = config or RAGConfig()
         self.index_path = index_path or "./indices/default_index"
         
+        # Initialize tokenizer
+        if use_bedrock_tokenizer:
+            logger.info("Using Bedrock Tokenizer for accurate token counting.")
+            self.tokenizer = BedrockTokenizer(self.config.bedrock)
+        else:
+            logger.info("Using Heuristic Tokenizer for token estimation.")
+            self.tokenizer = HeuristicTokenizer()
+            
         # Initialize components
         self.preprocessor = VietnameseMarkdownPreprocessor()
-        self.chunker = HierarchicalChunker(self.config.chunking)
+        # Truyền tokenizer vào chunker
+        self.chunker = HierarchicalChunker(self.config.chunking, self.tokenizer)
         self.table_processor = TableProcessor(self.config.table)
         self.embedder = VietnameseEmbedder(self.config.embedding)
         
@@ -305,6 +59,10 @@ class VietnameseRAGSystem:
         # Try to load existing index
         self._try_load_existing_index()
     
+    # ... (Các phương thức còn lại của VietnameseRAGSystem không thay đổi)
+    # ... Ví dụ: _create_vector_store, _try_load_existing_index, process_document, etc.
+    # --- Dán toàn bộ phần còn lại của file main.py gốc vào đây ---
+
     def _create_vector_store(self) -> VectorStore:
         """Create vector store based on configuration"""
         if self.config.vector_store_type == 'faiss':
@@ -618,13 +376,20 @@ async def main():
                        help='Rebuild vector index')
     parser.add_argument('--stats', action='store_true', 
                        help='Show system statistics')
+    # Thêm tùy chọn sử dụng Bedrock tokenizer
+    parser.add_argument('--use-bedrock-tokenizer', action='store_true', 
+                       help='Use Bedrock for accurate token counting. Requires AWS credentials.')
     
     args = parser.parse_args()
     
     # Initialize RAG system
     print("🚀 Initializing Vietnamese RAG System...")
     config = RAGConfig()
-    rag_system = VietnameseRAGSystem(config, args.index_path)
+    rag_system = VietnameseRAGSystem(
+        config, 
+        args.index_path, 
+        use_bedrock_tokenizer=args.use_bedrock_tokenizer
+    )
     
     # Show initial stats
     initial_stats = rag_system.get_statistics()
